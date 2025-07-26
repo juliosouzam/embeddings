@@ -1,0 +1,27 @@
+{
+  "name": "embeddings",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --outfile=dist/index.js --minify --platform=node --format=cjs",
+    "dev": "tsx watch src/index.ts",
+    "test": "echo \"No tests yet\""
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.1.2",
+    "@types/node": "latest",
+    "esbuild": "^0.25.8",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@langchain/community": "^0.3.49",
+    "@langchain/ollama": "^0.2.3",
+    "dotenv": "^17.2.1",
+    "fastify": "^5.4.0",
+    "neo4j-driver": "^5.28.1",
+    "ollama": "^0.5.16",
+    "zod": "^4.0.9"
+  }
+}

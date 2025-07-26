@@ -1,0 +1,28 @@
+{
+  "biome.enabled": true,
+  "editor.formatOnSave": true,
+  "[javascript][javascriptreact][typescript][typescriptreact]": {
+    "editor.defaultFormatter": "biomejs.biome",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "quickfix.biome": "always",
+      "source.organizeImports.biome": "always",
+      "source.fixAll": "always"
+    }
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "sqltools.connections": [
+    {
+      "previewLimit": 50,
+      "server": "localhost",
+      "port": 5432,
+      "driver": "PostgreSQL",
+      "name": "ccca",
+      "database": "ccca",
+      "username": "ccca",
+      "password": "password"
+    }
+  ]
+}

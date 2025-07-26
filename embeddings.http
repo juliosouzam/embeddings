@@ -1,0 +1,7 @@
+POST http://localhost:3000/embeddings
+accept: application/json
+content-type: application/json
+
+{
+    "text": "julio@psicarlosantos.com"
+}
