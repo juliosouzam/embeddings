@@ -1,12 +1,11 @@
-import { inspect } from 'node:util';
-import { Neo4jGraph } from '@langchain/community/graphs/neo4j_graph';
 import { Neo4jVectorStore } from '@langchain/community/vectorstores/neo4j_vector';
-import { ChatOllama, OllamaEmbeddings } from '@langchain/ollama';
+import { OllamaEmbeddings } from '@langchain/ollama';
+import { env } from './env';
 
 const config = {
-  url: 'bolt://localhost:7687',
-  username: 'neo4j',
-  password: 'password',
+  url: env.NEO4J_URI,
+  username: env.NEO4J_USER,
+  password: env.NEO4J_PASSWORD,
   textNodeProperties: ['text'],
   indexName: 'sim_example_index',
   keywordIndexName: 'sim_example_keywords',
@@ -14,8 +13,8 @@ const config = {
 };
 
 const ollamaEmbeddings = new OllamaEmbeddings({
-  model: 'nomic-embed-text',
-  baseUrl: process.env.OPENAI_BASE_URL,
+  model: env.EMBEDDING_MODEL,
+  baseUrl: env.OLLAMA_BASE_URL,
 });
 
 const neo4jVectorIndex = await Neo4jVectorStore.fromExistingGraph(

@@ -13,8 +13,12 @@ const envSchema = z.object({
   NEO4J_DATABASE: z.string(),
   NEO4J_VECTOR_THRESHOLD: z.coerce.number(),
 
+  GOOGLE_API_KEY: z.string(),
+  GOOGLE_CSE_ID: z.string(),
+
   NLP_MODEL: z.string(),
   CODER_MODEL: z.string(),
+  EMBEDDING_MODEL: z.string(),
 });
 
 export const env = envSchema.parse(process.env);

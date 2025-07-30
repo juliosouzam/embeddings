@@ -1,134 +1,131 @@
-import { readFile } from 'node:fs/promises';
-import { Neo4jGraph } from '@langchain/community/graphs/neo4j_graph';
+import { CheerioWebBaseLoader } from '@langchain/community/document_loaders/web/cheerio';
+import { GoogleCustomSearch } from '@langchain/community/tools/google_custom_search';
 import { Neo4jVectorStore } from '@langchain/community/vectorstores/neo4j_vector';
 import { ChatOllama, OllamaEmbeddings } from '@langchain/ollama';
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { env } from './env';
 
-const config = {
-  url: env.NEO4J_URI,
-  username: env.NEO4J_USER,
-  password: env.NEO4J_PASSWORD,
-  textNodeProperties: ['text'],
-  indexName: 'javascript_index',
-  keywordIndexName: 'javascript_keywords',
-  searchType: 'vector' as const,
-  nodeLabel: 'Chunk',
-  textNodeProperty: 'text',
-  embeddingNodeProperty: 'embedding',
-};
-
-// ✅ Initialize Language Model
+// ✅ Inicializa Modelos e Ferramentas
 const model = new ChatOllama({
   temperature: 0,
-  maxRetries: 2,
   model: env.NLP_MODEL,
   baseUrl: env.OLLAMA_BASE_URL,
+  keepAlive: '10m',
 });
 
-// ✅ Initialize Embeddings Model
 const ollamaEmbeddings = new OllamaEmbeddings({
-  model: 'nomic-embed-text',
+  model: env.EMBEDDING_MODEL,
   baseUrl: env.OLLAMA_BASE_URL,
 });
 
-const documents = (await readFile('./data/javascript.txt', 'utf-8'))
-  .toString()
-  .split('.')
-  .map((sentence) => ({
-    pageContent: sentence.trim(),
-    metadata: {},
-  }))
-  .filter((doc) => doc.pageContent.length > 10);
+const searchTool = new GoogleCustomSearch({
+  apiKey: env.GOOGLE_API_KEY,
+  googleCSEId: env.GOOGLE_CSE_ID,
+});
 
-const neo4jVectorIndex = await Neo4jVectorStore.fromExistingGraph(
+const textSplitter = new RecursiveCharacterTextSplitter({
+  chunkSize: 1000,
+  chunkOverlap: 200,
+});
+
+// 1️⃣ Conecta-se ao índice vetorial existente no Neo4j
+const neo4jVectorIndex = await Neo4jVectorStore.fromExistingIndex(
   ollamaEmbeddings,
-  config,
+  {
+    url: env.NEO4J_URI,
+    username: env.NEO4J_USER,
+    password: env.NEO4J_PASSWORD,
+    indexName: 'javascript_index',
+    textNodeProperty: 'text',
+  },
 );
 
-// ✅ Function to Check and Store Documents with Embeddings
-async function addDocumentIfNotExists(doc: {
-  pageContent: string;
-  metadata: Record<string, unknown>;
-}) {
-  const searchResults = await neo4jVectorIndex.similaritySearch(
-    doc.pageContent,
-    2,
+// ✅ Função para Responder Perguntas com Contexto Local e da Web
+async function answerQuestionWithWebSearch(question: string) {
+  console.log('STEP 1: Buscando URLs relevantes na web...');
+  const searchResultString: string = await searchTool.invoke(question);
+
+  // Extrai URLs do resultado da busca (pode precisar de ajuste dependendo do formato)
+  const urls = searchResultString
+    .split('\n')
+    .map((line) => line.match(/https?:\/\/[^\s]+/))
+    .filter((match) => match !== null)
+    .map((match) => match[0]);
+
+  if (urls.length === 0) {
+    console.log('Nenhuma URL encontrada na busca.');
+    return 'Não consegui encontrar fontes na web para responder a essa pergunta.';
+  }
+
+  console.log(`STEP 2: Carregando conteúdo de ${urls.length} URLs...`);
+  const loadedWebDocs = [];
+  for (const url of urls) {
+    try {
+      const loader = new CheerioWebBaseLoader(url);
+      const docs = await loader.load();
+      loadedWebDocs.push(...docs);
+    } catch (e) {
+      console.warn(`Aviso: Falha ao carregar a URL ${url}.`, e);
+    }
+  }
+
+  if (loadedWebDocs.length === 0) {
+    console.log('Nenhum documento pôde ser carregado das URLs.');
+    return 'Não foi possível carregar o conteúdo das fontes da web.';
+  }
+
+  console.log(
+    'STEP 3: Dividindo os documentos da web em chunks com o RecursiveCharacterTextSplitter...',
   );
-  console.log('🔍 Search Results:', searchResults);
+  const webChunks = await textSplitter.splitDocuments(loadedWebDocs);
+  console.log(`✅ Documentos da web divididos em ${webChunks.length} chunks.`);
+  // --- ETAPA B: ARMAZENAR NO VECTOR STORE E GERAR RESPOSTA ---
 
-  if (
-    searchResults.length > 0 &&
-    searchResults.some(
-      (result) => result.pageContent === '\ntext: '.concat(doc.pageContent),
-    )
-  ) {
-    console.log(`🚫 Skipping duplicate: "${doc.pageContent}"`);
-  } else {
-    console.log(`✅ Adding new document: "${doc.pageContent}"`);
-    await neo4jVectorIndex.addDocuments([doc]);
-  }
-}
+  console.log(
+    'STEP 4: Salvando os novos chunks da web no Neo4j Vector Store...',
+  );
+  const cleanedWebChunks = webChunks.map((chunk) => {
+    return {
+      pageContent: chunk.pageContent,
+      metadata: {},
+    };
+  });
+  await neo4jVectorIndex.addDocuments(cleanedWebChunks);
+  console.log('✅ Chunks da web salvos com sucesso.');
 
-// ✅ Add Documents to Vector Store if Not Exists
-for (const doc of documents) {
-  await addDocumentIfNotExists(doc);
-}
+  console.log(
+    'STEP 5: Buscando o contexto mais relevante (local + web) no Neo4j...',
+  );
+  const relevantDocs = await neo4jVectorIndex.similaritySearch(question, 5);
+  const context = relevantDocs.map((doc) => doc.pageContent).join('\n\n');
 
-// ✅ Function to Answer Questions Based on Stored Context
-async function answerQuestion(question: string) {
-  console.log(`🔍 Processing question: "${question}"`);
-
-  // 2️⃣ Search for Most Relevant Chunks in Neo4j
-  const results = await neo4jVectorIndex.similaritySearchWithScore(question, 1);
-  const relevantChunks = results
-    .map(([result]) => result.pageContent.replaceAll('text: ', ''))
-    .filter(Boolean);
-
-  if (relevantChunks.length === 0) {
-    console.log('⚠️ No relevant context found.');
-    return "Sorry, I couldn't find enough information to answer.";
-  }
-
-  // console.log("📌 Relevant chunks found:", relevantChunks);
-
-  // 3️⃣ Construct Prompt for GPT
-  const context = relevantChunks.join('\n');
+  // --- ETAPA C: GERAR RESPOSTA FINAL ---
   const prompt = `
-        Answer the question concisely and naturally based on the following context:
-        Don't use information outside of the provided context.
+      Você é um assistente especialista. Responda à pergunta do usuário de forma completa e informativa,
+      usando o contexto fornecido, que inclui tanto informações de base quanto informações recém-extraídas da web.
 
-        Context:
-        ${context}
+      Contexto:
+      ---
+      ${context}
+      ---
 
-        Question: ${question}
+      Pergunta: ${question}
 
-        Provide a long and informative response:
+      Resposta Detalhada:
   `.trim();
 
-  // 4️⃣ Generate Response Using AI Model
   const response = await model.invoke(prompt);
 
-  // console.log("📝 Generated Answer:", response);
-  return response;
+  await neo4jVectorIndex.close();
+  return response.content;
 }
 
-await Promise.all(
-  [
-    'Is JavaScript a object oriented programing language?',
-    'Is JavaScript an interpreted language?',
-    'Node.js and JavaScript are the same?',
-  ].map(async (question) => {
-    // ✅ Ask a Question and Get an Answer
-    const response = await answerQuestion(question);
-    if (typeof response === 'string') {
-      console.error('❌ Error: Response is not a string:', response);
-      return;
-    }
-    console.log(`\n🔍 Question: "${question}"`);
-    console.log('\n💡 Final Answer:\n', response.content);
-    return;
-  }),
-);
+async function main() {
+  const question =
+    'Is JavaScript a object oriented programing language? Explain the main concepts.';
+  const answer = await answerQuestionWithWebSearch(question);
 
-// ✅ Close Neo4j Connection
-await neo4jVectorIndex.close();
+  console.log(`\n💡 Resposta Final (RAG + Web):\n${answer}`);
+}
+
+main();
